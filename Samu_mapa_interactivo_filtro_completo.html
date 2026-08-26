@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="ca">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Samu — Mapa social</title>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<style>
+*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#050505;color:#eee;font-family:Arial,Helvetica,sans-serif}
+#map{width:100%;height:100%;touch-action:none;cursor:grab}#map.dragging{cursor:grabbing}#svgMap{width:100%;height:100%;user-select:none}
+.person-node{cursor:pointer;transition:opacity .25s,filter .25s}.person-node.dimmed{opacity:0;pointer-events:none}.person-node.related{opacity:1}.person-node.selected circle{stroke-width:4}
+.edge{transition:opacity .25s}.edge.dimmed{opacity:0!important}.edge.related{opacity:.95!important}
+.person-node>circle,.person-node>text{animation:samuFloat 4.8s ease-in-out infinite}.person-node:nth-of-type(3n)>circle,.person-node:nth-of-type(3n)>text{animation-duration:5.7s;animation-delay:-1.1s}
+@keyframes samuFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-5px)}}
+.main-nav{position:fixed;top:24px;left:78px;z-index:20}.main-nav button,.controls button{border:1px solid #292929;background:rgba(7,7,7,.93);color:#bbb;cursor:pointer}
+.main-nav button{height:38px;padding:0 15px;font-size:10px;letter-spacing:1.5px}.main-nav button:hover,.controls button:hover{color:#fff;background:#151515}
+.controls{position:fixed;top:24px;left:24px;display:flex;flex-direction:column;gap:5px;z-index:20}.controls button{width:38px;height:38px;font-size:17px}.zoom-level{color:#555;font-size:9px;text-align:center;padding:4px}
+.nexus{position:fixed;top:24px;right:24px;border:1px solid #1f4f70;background:rgba(5,5,5,.94);padding:15px 18px;display:flex;gap:10px;align-items:center;font-size:13px;font-weight:600;z-index:20}.nexus i{width:13px;height:13px;border-radius:50%;background:#28a7ff;display:inline-block;box-shadow:0 0 10px rgba(40,167,255,.6)}
+.legend{position:fixed;bottom:14px;left:50%;transform:translateX(-50%);width:min(1200px,94vw);padding:13px 18px;border-top:1px solid #222;background:rgba(5,5,5,.94);display:flex;flex-wrap:wrap;justify-content:center;gap:12px 20px;font-size:10px;color:#999;z-index:20}.legend-title{color:#555;letter-spacing:2px;margin-right:5px}.legend span{display:inline-flex;align-items:center;gap:7px;white-space:nowrap}.legend span i{width:9px;height:9px;border-radius:50%;display:inline-block}
+.panel{position:fixed;right:0;top:0;width:min(390px,92vw);height:100%;background:#0c0c0c;border-left:1px solid #222;padding:55px 25px;transform:translateX(100%);transition:.3s;overflow:auto;z-index:30}.panel.open{transform:translateX(0)}.close{position:absolute;right:18px;top:12px;background:none;border:0;color:#777;font-size:26px}h2{font-size:32px;margin:5px 0 20px}.muted{color:#666;font-size:10px;letter-spacing:2px}.row{padding:10px 0;border-bottom:1px solid #191919;font-size:12px;display:flex;justify-content:space-between;gap:10px}.story{color:#aaa;line-height:1.6;margin:20px 0}
+.loading{position:fixed;inset:0;display:grid;place-items:center;background:#050505;z-index:100;color:#777;font-size:12px;letter-spacing:1px}
+.error{color:#ff8b8b;text-align:center;padding:24px;max-width:620px}
+@media(max-width:700px){.nexus{right:12px;top:12px;font-size:11px}.controls{left:12px;top:12px}.main-nav{left:58px;top:12px}.legend{bottom:6px;font-size:8px;gap:8px 12px}}
+</style>
+</head>
+<body>
+<div id="loading" class="loading">CARREGANT EL TEU MAPA…</div>
+<div id="map"></div>
+<div class="controls"><button id="zoomIn">+</button><button id="zoomOut">−</button><button id="reset">⌂</button><div class="zoom-level" id="zoomText">100%</div></div>
+<div class="main-nav"><button id="statsPageBtn">ESTADÍSTIQUES ↗</button></div>
+<div class="nexus"><i></i><span>El nexe de connexió ets tu, Samu</span></div>
+<div class="legend" id="legend"></div>
+<aside class="panel" id="panel"><button class="close" id="close">×</button><div id="content"></div></aside>
+
+<script>
+const DATA_URL = "data.xlsx";
+const TYPE_COLORS = ["#c9a7ff","#f2c66d","#70d9b0","#ff7777","#ff9b67","#75a9ff","#f178ba","#9adf68","#65cbe8","#c8a27a","#e4df73","#aa8ee8","#b8b8b8"];
+
+let data={people:[],connections:[],references:[]};
+let nodes=new Map(), edges=[], positions={}, svg, viewport, scale=1,tx=0,ty=0,dragging=false,startX=0,startY=0,startTx=0,startTy=0,nodeDrag=null;
+
+function sid(v){if(v===null||v===undefined)return "";let s=String(v).trim();if(/^\d+\.0$/.test(s))s=s.split(".")[0];return s}
+function displayName(full){const p=String(full||"").trim().split(/\s+/);if(p.length<=1)return p[0]||"";const particles=new Set(["de","del","la","las","los","i","d","da","di"]);let surname="";for(let i=p.length-1;i>=1;i--){if(!particles.has(p[i].toLowerCase())){surname=p[i];break}}return surname?`${p[0]} ${surname[0].toUpperCase()}.`:p[0]}
+function typeColor(type,types){const i=types.indexOf(type);return TYPE_COLORS[i%TYPE_COLORS.length]||"#666"}
+
+async function loadWorkbook(){
+  const res=await fetch(DATA_URL,{cache:"no-store"});
+  if(!res.ok) throw new Error("No s'ha pogut carregar data.xlsx");
+  const buf=await res.arrayBuffer();
+  const wb=XLSX.read(buf,{type:"array"});
+  const get=(name)=>{const ws=wb.Sheets[name];return ws?XLSX.utils.sheet_to_json(ws,{defval:""}):[]};
+  data.people=get("PERSONAS");data.connections=get("CONEXIONES");data.references=get("REFERENCIAS");
+  if(!data.people.length||!data.connections.length) throw new Error("data.xlsx ha de contenir les fulles PERSONAS i CONEXIONES.");
+}
+function buildGraph(){
+  const types=[...new Set(data.people.map(p=>String(p["Tipo"]||"Sense tipologia")))];
+  const nameToId=new Map();
+  data.people.forEach(p=>nameToId.set(String(p["Nombre"]||"").trim(),sid(p["ID"])));
+  nodes.clear();
+  data.people.forEach(p=>{const id=sid(p["ID"]);nodes.set(id,{id,name:String(p["Nombre"]||"").trim(),display:displayName(p["Nombre"]),type:String(p["Tipo"]||"Sense tipologia"),date:String(p["Fecha aprox."]||""),place:String(p["Lugar / evento"]||""),registered:true})});
+  nodes.set("SAMU",{id:"SAMU",name:"Samu",display:"SAMU",type:"Nexe",registered:false});
+  edges=[];
+  function resolve(name,idv){const i=sid(idv);if(i&&nodes.has(i))return i;const n=String(name||"").trim();if(nameToId.has(n))return nameToId.get(n);const cid="X_"+n.toLowerCase().replace(/[^a-z0-9]+/g,"_");if(!nodes.has(cid))nodes.set(cid,{id:cid,name:n,display:displayName(n),type:"No classificat",registered:false});return cid}
+  data.connections.forEach(c=>{
+    let a=resolve(c["Persona A"],c["ID A"]),b=resolve(c["Persona B"],c["ID B"]);
+    [a,b].forEach((id,idx)=>{const n=nodes.get(id);if(n&&["manel martinez","manel martínez","samu"].includes(n.name.toLowerCase())) idx===0?a="SAMU":b="SAMU"});
+    if(a&&b&&a!==b)edges.push({a,b,thanks:String(c["Gracias a Samu"]||"").toLowerCase().startsWith("sí"),source:String(c.Fuente||"")});
+  });
+  const registered=[...nodes.values()].filter(n=>n.id!=="SAMU");
+  const rings=[240,350,465,585,710];
+  const groups=rings.map(()=>[]);
+  registered.sort((a,b)=>(b.degree||0)-(a.degree||0));
+  registered.forEach((n,i)=>groups[i%rings.length].push(n));
+  positions={SAMU:{x:850,y:620}};
+  groups.forEach((g,ri)=>g.forEach((n,j)=>{const a=-Math.PI/2+(ri%2)*Math.PI/g.length+2*Math.PI*j/g.length;positions[n.id]={x:850+rings[ri]*Math.cos(a),y:620+rings[ri]*.72*Math.sin(a)}}));
+  const degree=new Map([...nodes.keys()].map(k=>[k,0]));
+  edges.forEach(e=>{degree.set(e.a,(degree.get(e.a)||0)+1);degree.set(e.b,(degree.get(e.b)||0)+1)});
+  nodes.forEach((n,id)=>n.degree=degree.get(id)||0);
+  return types;
+}
+function render(types){
+  const W=1700,H=1240;
+  const ns=[...nodes.values()].filter(n=>n.id!=="SAMU");
+  let svgParts=[`<svg id="svgMap" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet"><rect width="${W}" height="${H}" fill="#050505"/><g id="viewport">`];
+  ns.forEach(n=>{const p=positions[n.id];svgParts.push(`<line class="edge central-edge" data-a="SAMU" data-b="${n.id}" x1="850" y1="620" x2="${p.x.toFixed(1)}" y2="${p.y.toFixed(1)}" stroke="${typeColor(n.type,types)}" stroke-width="4.2" opacity=".82"/>`)});
+  edges.forEach(e=>{const a=positions[e.a],b=positions[e.b];if(!a||!b)return;svgParts.push(`<line class="edge social-edge" data-a="${e.a}" data-b="${e.b}" x1="${a.x.toFixed(1)}" y1="${a.y.toFixed(1)}" x2="${b.x.toFixed(1)}" y2="${b.y.toFixed(1)}" stroke="#fff" stroke-width="1.15" opacity=".38"/>`);}});
+  ns.forEach(n=>{const p=positions[n.id],r=25+Math.min(n.degree,8)*1.5,c=typeColor(n.type,types);svgParts.push(`<g class="person-node" data-id="${n.id}" transform="translate(${p.x.toFixed(1)} ${p.y.toFixed(1)})"><circle r="${r}" fill="#080808" stroke="${c}" stroke-width="2"/><text y="3" fill="#f2f2ef" font-size="12" text-anchor="middle">${escapeHtml(n.display)}</text><text y="${r+18}" fill="#555" font-size="9" text-anchor="middle">${n.degree}</text></g>`)});
+  svgParts.push(`<g><circle cx="850" cy="620" r="54" fill="#f1f1ed"/><text x="850" y="625" fill="#050505" font-size="17" font-weight="700" letter-spacing="3" text-anchor="middle">SAMU</text></g></g></svg>`);
+  document.getElementById("map").innerHTML=svgParts.join("");
+  svg=document.getElementById("svgMap");viewport=document.getElementById("viewport");
+  document.getElementById("legend").innerHTML='<span class="legend-title">CONNEXIONS</span><span><i style="background:#fff"></i>entre persones</span><span class="legend-title" style="margin-left:8px">TIPOLOGIA</span>'+types.map(t=>`<span><i style="background:${typeColor(t,types)}"></i>${escapeHtml(t)}</span>`).join("");
+  attachMapEvents();applyTransform();
+}
+function escapeHtml(s=""){return String(s).replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[m]))}
+function applyTransform(){viewport?.setAttribute("transform",`translate(${tx} ${ty}) scale(${scale})`);document.getElementById("zoomText").textContent=Math.round(scale*100)+"%"}
+function zoomAt(f,x,y){const ns=Math.max(.35,Math.min(3.5,scale*f)),k=ns/scale;tx=x-(x-tx)*k;ty=y-(y-ty)*k;scale=ns;applyTransform()}
+function resetView(){scale=1;tx=0;ty=0;applyTransform()}
+function updateIncidentEdges(id,x,y){document.querySelectorAll(".edge").forEach(e=>{if(e.dataset.a===id){e.setAttribute("x1",x);e.setAttribute("y1",y)}if(e.dataset.b===id){e.setAttribute("x2",x);e.setAttribute("y2",y)}})}
+function clearNetworkSelection(){
+  document.querySelectorAll(".person-node,.edge").forEach(el=>{
+    el.classList.remove("dimmed","related","selected");
+  });
+}
+
+function selectNetwork(id){
+  const selected=String(id);
+  const connected=new Set([selected]);
+
+  // The only visible people are the selected person and people
+  // directly connected to that person.
+  edges.forEach(e=>{
+    if(String(e.a)===selected) connected.add(String(e.b));
+    if(String(e.b)===selected) connected.add(String(e.a));
+  });
+
+  // Hide every other person completely.
+  document.querySelectorAll(".person-node").forEach(node=>{
+    const keep=connected.has(String(node.dataset.id));
+    node.classList.toggle("dimmed",!keep);
+    node.classList.toggle("related",keep);
+    node.classList.toggle("selected",String(node.dataset.id)===selected);
+  });
+
+  // Hide every vector except:
+  // 1) Samu -> selected
+  // 2) Samu -> direct neighbours
+  // 3) direct connection between selected and a neighbour
+  document.querySelectorAll(".edge").forEach(edge=>{
+    const a=String(edge.dataset.a);
+    const b=String(edge.dataset.b);
+    const keep = (a===selected || b===selected);
+    edge.classList.toggle("dimmed",!keep);
+    edge.classList.toggle("related",keep);
+  });
+}
+
+function openPanel(id){
+  selectNetwork(id);
+  const n=nodes.get(id);
+  if(!n) return;
+
+  const con=edges.filter(e=>e.a===id||e.b===id);
+
+  // Every connection in this map is a connection introduced by Samu.
+  // Build the list of people presented and the unique worlds they represent.
+  const connectedPeople=[];
+  const worlds=[];
+  con.forEach(e=>{
+    const oid=e.a===id?e.b:e.a;
+    const other=nodes.get(oid);
+    if(!other || other.id==="SAMU") return;
+    connectedPeople.push(other);
+    if(other.type && !worlds.includes(other.type) && other.type!=="Nexe" && other.type!=="No classificat"){
+      worlds.push(other.type);
+    }
+  });
+
+  let h=`<div class="muted">PERSONA</div><h2>${escapeHtml(n.name)}</h2>`;
+
+  if(n.registered){
+    h+=`<div class="row"><span>TIPUS</span><b>${escapeHtml(n.type)}</b></div>`;
+    if(n.date) h+=`<div class="row"><span>QUAN</span><b>${escapeHtml(n.date)}</b></div>`;
+    if(n.place) h+=`<div class="row"><span>LLOC / ESDEVENIMENT</span><b>${escapeHtml(n.place)}</b></div>`;
+  }
+
+  h+=`<div class="muted" style="margin-top:25px">ELS MONS QUE HAS CONNECTAT</div>`;
+  h+= worlds.length
+    ? `<div class="worlds">${worlds.map(w=>`<span class="world">${escapeHtml(w)}</span>`).join('<span class="plus">+</span>')}</div>`
+    : `<div class="story">No hi ha prou dades de tipologia per identificar els mons connectats.</div>`;
+
+  h+=`<div class="muted" style="margin-top:25px">LI HAS PRESENTAT</div>`;
+  if(connectedPeople.length){
+    connectedPeople.sort((a,b)=>a.name.localeCompare(b.name));
+    connectedPeople.forEach(other=>{
+      h+=`<div class="row"><span>${escapeHtml(other.display||other.name)}</span><b>LI HAS PRESENTAT A AQUESTA PERSONA</b></div>`;
+    });
+  }else{
+    h+=`<div class="story">No consta cap connexió directa en les dades.</div>`;
+  }
+
+  h+=`<div class="muted" style="margin-top:25px">CONNEXIONS · ${con.length}</div>`;
+  document.getElementById("content").innerHTML=h;
+  document.getElementById("panel").classList.add("open");
+}
+
+function attachMapEvents(){
+  document.getElementById("zoomIn").onclick=()=>zoomAt(1.2,850,620);document.getElementById("zoomOut").onclick=()=>zoomAt(.8333,850,620);document.getElementById("reset").onclick=resetView;
+  document.getElementById("statsPageBtn").onclick=()=>location.href="Samu_estadistiques.html";document.getElementById("close").onclick=()=>{document.getElementById("panel").classList.remove("open");clearNetworkSelection()};
+  svg.addEventListener("wheel",e=>{e.preventDefault();const r=svg.getBoundingClientRect(),x=(e.clientX-r.left)/r.width*1700,y=(e.clientY-r.top)/r.height*1240;zoomAt(e.deltaY<0?1.12:.89,x,y)},{passive:false});
+  svg.addEventListener("pointerdown",e=>{if(e.target.closest(".person-node"))return;dragging=true;svg.setPointerCapture(e.pointerId);startX=e.clientX;startY=e.clientY;startTx=tx;startTy=ty;map.classList.add("dragging")});
+  svg.addEventListener("pointermove",e=>{if(!dragging)return;tx=startTx+(e.clientX-startX)*1700/svg.clientWidth;ty=startTy+(e.clientY-startY)*1240/svg.clientHeight;applyTransform()});
+  svg.addEventListener("pointerup",()=>{dragging=false;map.classList.remove("dragging")});
+  svg.addEventListener("click",e=>{
+  if(!e.target.closest(".person-node")){
+    clearNetworkSelection();
+  }
+});
+  document.querySelectorAll(".person-node").forEach(n=>{
+    n.addEventListener("pointerdown",e=>{e.stopPropagation();nodeDrag={node:n,x:e.clientX,y:e.clientY,orig:n.getAttribute("transform"),moved:false}});
+    n.addEventListener("pointermove",e=>{if(!nodeDrag||nodeDrag.node!==n)return;let dx=(e.clientX-nodeDrag.x)*1700/svg.clientWidth/scale,dy=(e.clientY-nodeDrag.y)*1240/svg.clientHeight/scale;if(Math.abs(dx)+Math.abs(dy)>4)nodeDrag.moved=true;let m=nodeDrag.orig.match(/translate\\(([-\\d.]+) ([-\\d.]+)\\)/);if(m){let nx=+m[1]+dx,ny=+m[2]+dy;n.setAttribute("transform",`translate(${nx} ${ny})`);updateIncidentEdges(n.dataset.id,nx,ny)}});
+    n.addEventListener("pointerup",()=>{if(!nodeDrag||nodeDrag.node!==n)return;const moved=nodeDrag.moved;nodeDrag=null;if(!moved)openPanel(n.dataset.id)});
+  });
+}
+
+(async()=>{
+  try{await loadWorkbook();const types=buildGraph();render(types);document.getElementById("loading").remove()}
+  catch(err){document.getElementById("loading").innerHTML=`<div class="error"><strong>No s'ha pogut carregar el mapa</strong><br><br>${escapeHtml(err.message)}<br><br>Comprova que <b>data.xlsx</b> estigui al mateix repositori i que les fulles es diguin PERSONAS, CONEXIONES i REFERENCIAS.</div>`}
+})();
+</script>
+</body>
+</html>
