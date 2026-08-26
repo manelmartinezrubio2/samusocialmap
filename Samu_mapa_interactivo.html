@@ -8,8 +8,8 @@
 <style>
 *{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#050505;color:#eee;font-family:Arial,Helvetica,sans-serif}
 #map{width:100%;height:100%;touch-action:none;cursor:grab}#map.dragging{cursor:grabbing}#svgMap{width:100%;height:100%;user-select:none}
-.person-node{cursor:pointer;transition:opacity .25s,filter .25s}.person-node.dimmed{opacity:0;pointer-events:none}.person-node.related{opacity:1}.person-node.selected circle{stroke-width:4}
-.edge{transition:opacity .25s}.edge.dimmed{opacity:0!important}.edge.related{opacity:.95!important}
+.person-node{cursor:pointer;transition:opacity .25s,filter .25s}.person-node.dimmed{opacity:0;pointer-events:none}.person-node.hidden{display:none!important}.person-node.hidden{display:none!important}.person-node.related{opacity:1}.person-node.selected circle{stroke-width:4}
+.edge{transition:opacity .25s}.edge.dimmed{opacity:0!important}.edge.hidden{display:none!important}.edge.hidden{display:none!important}.edge.related{opacity:.95!important}
 .person-node>circle,.person-node>text{animation:samuFloat 4.8s ease-in-out infinite}.person-node:nth-of-type(3n)>circle,.person-node:nth-of-type(3n)>text{animation-duration:5.7s;animation-delay:-1.1s}
 @keyframes samuFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-5px)}}
 .main-nav{position:fixed;top:24px;left:78px;z-index:20}.main-nav button,.controls button{border:1px solid #292929;background:rgba(7,7,7,.93);color:#bbb;cursor:pointer}
@@ -33,7 +33,7 @@
 <aside class="panel" id="panel"><button class="close" id="close">×</button><div id="content"></div></aside>
 
 <script>
-const DATA_URL = "data.xlsx";
+const DATA_URL = "data.xlsx?v=2";
 const TYPE_COLORS = ["#c9a7ff","#f2c66d","#70d9b0","#ff7777","#ff9b67","#75a9ff","#f178ba","#9adf68","#65cbe8","#c8a27a","#e4df73","#aa8ee8","#b8b8b8"];
 
 let data={people:[],connections:[],references:[]};
@@ -83,12 +83,12 @@ function render(types){
   const ns=[...nodes.values()].filter(n=>n.id!=="SAMU");
   let svgParts=[`<svg id="svgMap" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet"><rect width="${W}" height="${H}" fill="#050505"/><g id="viewport">`];
   ns.forEach(n=>{const p=positions[n.id];svgParts.push(`<line class="edge central-edge" data-a="SAMU" data-b="${n.id}" x1="850" y1="620" x2="${p.x.toFixed(1)}" y2="${p.y.toFixed(1)}" stroke="${typeColor(n.type,types)}" stroke-width="4.2" opacity=".82"/>`)});
-  edges.forEach(e=>{const a=positions[e.a],b=positions[e.b];if(!a||!b)return;svgParts.push(`<line class="edge social-edge" data-a="${e.a}" data-b="${e.b}" x1="${a.x.toFixed(1)}" y1="${a.y.toFixed(1)}" x2="${b.x.toFixed(1)}" y2="${b.y.toFixed(1)}" stroke="#fff" stroke-width="1.15" opacity=".38"/>`);}});
+  edges.forEach(e=>{const a=positions[e.a],b=positions[e.b];if(!a||!b)return;svgParts.push(`<line class="edge social-edge" data-a="${e.a}" data-b="${e.b}" x1="${a.x.toFixed(1)}" y1="${a.y.toFixed(1)}" x2="${b.x.toFixed(1)}" y2="${b.y.toFixed(1)}" stroke="#fff" stroke-width="1.15" opacity=".38"/>`)" cy="${my}" r="5" fill="#28a7ff"/>`)}});
   ns.forEach(n=>{const p=positions[n.id],r=25+Math.min(n.degree,8)*1.5,c=typeColor(n.type,types);svgParts.push(`<g class="person-node" data-id="${n.id}" transform="translate(${p.x.toFixed(1)} ${p.y.toFixed(1)})"><circle r="${r}" fill="#080808" stroke="${c}" stroke-width="2"/><text y="3" fill="#f2f2ef" font-size="12" text-anchor="middle">${escapeHtml(n.display)}</text><text y="${r+18}" fill="#555" font-size="9" text-anchor="middle">${n.degree}</text></g>`)});
   svgParts.push(`<g><circle cx="850" cy="620" r="54" fill="#f1f1ed"/><text x="850" y="625" fill="#050505" font-size="17" font-weight="700" letter-spacing="3" text-anchor="middle">SAMU</text></g></g></svg>`);
   document.getElementById("map").innerHTML=svgParts.join("");
   svg=document.getElementById("svgMap");viewport=document.getElementById("viewport");
-  document.getElementById("legend").innerHTML='<span class="legend-title">CONNEXIONS</span><span><i style="background:#fff"></i>entre persones</span><span class="legend-title" style="margin-left:8px">TIPOLOGIA</span>'+types.map(t=>`<span><i style="background:${typeColor(t,types)}"></i>${escapeHtml(t)}</span>`).join("");
+  document.getElementById("legend").innerHTML='<span class="legend-title">CONNEXIONS</span><span><i style="background:#fff"></i>entre persones</span><span><i style="background:#28a7ff"></i>gràcies a tu</span><span class="legend-title" style="margin-left:8px">TIPOLOGIA</span>'+types.map(t=>`<span><i style="background:${typeColor(t,types)}"></i>${escapeHtml(t)}</span>`).join("");
   attachMapEvents();applyTransform();
 }
 function escapeHtml(s=""){return String(s).replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[m]))}
@@ -98,7 +98,7 @@ function resetView(){scale=1;tx=0;ty=0;applyTransform()}
 function updateIncidentEdges(id,x,y){document.querySelectorAll(".edge").forEach(e=>{if(e.dataset.a===id){e.setAttribute("x1",x);e.setAttribute("y1",y)}if(e.dataset.b===id){e.setAttribute("x2",x);e.setAttribute("y2",y)}})}
 function clearNetworkSelection(){
   document.querySelectorAll(".person-node,.edge").forEach(el=>{
-    el.classList.remove("dimmed","related","selected");
+    el.classList.remove("dimmed","related","selected","hidden");
   });
 }
 
@@ -106,7 +106,6 @@ function selectNetwork(id){
   const selected=String(id);
   const connected=new Set([selected]);
 
-  // Only direct neighbours of the selected person remain visible.
   edges.forEach(e=>{
     if(String(e.a)===selected) connected.add(String(e.b));
     if(String(e.b)===selected) connected.add(String(e.a));
@@ -114,23 +113,18 @@ function selectNetwork(id){
 
   document.querySelectorAll(".person-node").forEach(node=>{
     const keep=connected.has(String(node.dataset.id));
+    node.classList.toggle("hidden",!keep);
     node.classList.toggle("dimmed",!keep);
     node.classList.toggle("related",keep);
     node.classList.toggle("selected",String(node.dataset.id)===selected);
   });
 
   document.querySelectorAll(".edge").forEach(edge=>{
-    const a=String(edge.dataset.a), b=String(edge.dataset.b);
+    const a=String(edge.dataset.a),b=String(edge.dataset.b);
     const keep=(a===selected || b===selected);
+    edge.classList.toggle("hidden",!keep);
     edge.classList.toggle("dimmed",!keep);
     edge.classList.toggle("related",keep);
-  });
-
-  document.querySelectorAll("").forEach(dot=>{
-    const a=String(dot.dataset.a||""), b=String(dot.dataset.b||"");
-    const keep=(a===selected || b===selected);
-    dot.classList.toggle("dimmed",!keep);
-    dot.classList.toggle("related",keep);
   });
 }
 
@@ -140,23 +134,20 @@ function openPanel(id){
   if(!n) return;
 
   const con=edges.filter(e=>e.a===id||e.b===id);
-
-  // Every connection in this map is a connection introduced by Samu.
-  // Build the list of people presented and the unique worlds they represent.
   const connectedPeople=[];
   const worlds=[];
+
   con.forEach(e=>{
     const oid=e.a===id?e.b:e.a;
     const other=nodes.get(oid);
     if(!other || other.id==="SAMU") return;
     connectedPeople.push(other);
-    if(other.type && !worlds.includes(other.type) && other.type!=="Nexe" && other.type!=="No classificat"){
+    if(other.type && !["Nexe","No classificat"].includes(other.type) && !worlds.includes(other.type)){
       worlds.push(other.type);
     }
   });
 
   let h=`<div class="muted">PERSONA</div><h2>${escapeHtml(n.name)}</h2>`;
-
   if(n.registered){
     h+=`<div class="row"><span>TIPUS</span><b>${escapeHtml(n.type)}</b></div>`;
     if(n.date) h+=`<div class="row"><span>QUAN</span><b>${escapeHtml(n.date)}</b></div>`;
@@ -164,7 +155,7 @@ function openPanel(id){
   }
 
   h+=`<div class="muted" style="margin-top:25px">ELS MONS QUE HAS CONNECTAT</div>`;
-  h+= worlds.length
+  h+=worlds.length
     ? `<div class="worlds">${worlds.map(w=>`<span class="world">${escapeHtml(w)}</span>`).join('<span class="plus">+</span>')}</div>`
     : `<div class="story">No hi ha prou dades de tipologia per identificar els mons connectats.</div>`;
 
@@ -191,10 +182,8 @@ function attachMapEvents(){
   svg.addEventListener("pointermove",e=>{if(!dragging)return;tx=startTx+(e.clientX-startX)*1700/svg.clientWidth;ty=startTy+(e.clientY-startY)*1240/svg.clientHeight;applyTransform()});
   svg.addEventListener("pointerup",()=>{dragging=false;map.classList.remove("dragging")});
   svg.addEventListener("click",e=>{
-  if(!e.target.closest(".person-node")){
-    clearNetworkSelection();
-  }
-});
+    if(!e.target.closest(".person-node")) clearNetworkSelection();
+  });
   document.querySelectorAll(".person-node").forEach(n=>{
     n.addEventListener("pointerdown",e=>{e.stopPropagation();nodeDrag={node:n,x:e.clientX,y:e.clientY,orig:n.getAttribute("transform"),moved:false}});
     n.addEventListener("pointermove",e=>{if(!nodeDrag||nodeDrag.node!==n)return;let dx=(e.clientX-nodeDrag.x)*1700/svg.clientWidth/scale,dy=(e.clientY-nodeDrag.y)*1240/svg.clientHeight/scale;if(Math.abs(dx)+Math.abs(dy)>4)nodeDrag.moved=true;let m=nodeDrag.orig.match(/translate\\(([-\\d.]+) ([-\\d.]+)\\)/);if(m){let nx=+m[1]+dx,ny=+m[2]+dy;n.setAttribute("transform",`translate(${nx} ${ny})`);updateIncidentEdges(n.dataset.id,nx,ny)}});
